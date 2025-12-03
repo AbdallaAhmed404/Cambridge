@@ -91,7 +91,7 @@ const sendActivationEmail = async (user) => {
   await user.save({ validateBeforeSave: false }); // لتجنب إعادة التحقق من كلمة المرور
 
   // 3. بناء الرابط
-  const activationURL = `http://localhost:3000/activate-account/${activationToken}`;
+  const activationURL = `https://cambridgeksa.org/activate-account/${activationToken}`;
 
   const mailOptions = {
     from: `"Cambridge Support" <support@cambridgeksa.org>`,
@@ -148,7 +148,7 @@ const activateAccount = async (req, res) => {
 
     // 4. التوجيه إلى صفحة تسجيل الدخول (كما طلبت)
     // قم بتغيير /accounts/login/ إلى المسار الصحيح لديك
-    res.redirect('http://localhost:3000/accounts/login/?activated=true');
+    res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
     console.error('Activation error:', error);
@@ -292,7 +292,7 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // 4. 🔗 بناء رابط إعادة التعيين
-    const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
+    const resetURL = `https://cambridgeksa.org/reset-password/${resetToken}`;
 
     // 5. 📧 إعداد محتوى الإيميل (بصيغة مناسبة لإعادة تعيين كلمة المرور)
     const mailOptions = {
