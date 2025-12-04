@@ -11,8 +11,7 @@ const UserActivation = require('../models/UserActivation');
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
-  secure: false, // يجب أن تكون false عند استخدام 587
-  requireTLS: true, // فرض التشفير (TLS/STARTTLS)
+  secure: false, //  // فرض التشفير (TLS/STARTTLS)
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS, // حط باسورد الإيميل
