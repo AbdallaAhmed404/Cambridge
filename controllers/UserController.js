@@ -7,16 +7,14 @@ const path = require("path");
 const Resource = require('../models/ResourceModel');
 const ActivationCode = require('../models/ActivationCode');
 const UserActivation = require('../models/UserActivation');
+const SibApiV3Sdk = require('@sendinblue/client');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: false, //  // فرض التشفير (TLS/STARTTLS)
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // حط باسورد الإيميل
-  },
-});
+
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+const apiKey = apiInstance.authentications['apiKey'];
+apiKey.apiKey = process.env.BREVO_API_KEY;
+
+
 
 const checkActivationCode = async (req, res) => {
   try {
@@ -78,44 +76,58 @@ const checkActivationCode = async (req, res) => {
 };
 
 const sendActivationEmail = async (user) => {
-  // 1. إنشاء توكن التفعيل (صالح مثلاً لمدة 24 ساعة)
+  // 1. إنشاء توكن التفعيل (الكود كما هو)
   const activationToken = jwt.sign(
     { id: user._id },
-    process.env.JWT_SECRET, // استخدم نفس مفتاح التوقيع
+    process.env.JWT_SECRET,
     { expiresIn: '24h' }
   );
 
-  // 2. حفظ التوكن في قاعدة البيانات (اختياري ولكنه يزيد الأمان)
+  // 2. حفظ التوكن في قاعدة البيانات (الكود كما هو)
   user.activationToken = activationToken;
-  user.activationExpires = Date.now() + (24 * 60 * 60 * 1000); // 24 ساعة
-  await user.save({ validateBeforeSave: false }); // لتجنب إعادة التحقق من كلمة المرور
+  user.activationExpires = Date.now() + (24 * 60 * 60 * 1000);
+  await user.save({ validateBeforeSave: false });
 
-  // 3. بناء الرابط
-  const activationURL = `https://cambridgeksa.org/activate-account/${activationToken}`;
+  // 3. بناء الرابط - **مهم: استخدام BASE_URL من متغيرات البيئة**
+  const BASE_URL = 'http://localhost:3000';
+  const activationURL = `${BASE_URL}/activate-account/${activationToken}`;
 
-  const mailOptions = {
-    from: `"Cambridge Support" <support@cambridgeksa.org>`,
-    to: user.email,
-    subject: ' Activate Your Account',
-    html: `
- <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
-                <h2 style="color: #0056d2;">Account Activation</h2>
-                <p>Dear ${user.FirstName || 'User'},</p>
-                <p>Thank you for registering. Please click the button below to **activate your account** and start using our services. The link is valid for **24 hours**.</p>
-                <div style="text-align: center; margin: 25px 0;">
-                    <a href="${activationURL}"
-                       style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
-                    >Activate My Account</a>
-                </div>
-                <p>If you did not register, please ignore this message.</p>
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
-            </div>
-        `,
+  // 4. إعداد بيانات رسالة Brevo API
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+  sendSmtpEmail.sender = {
+    name: "Cambridge Support",
+    email: "support@cambridgeksa.org" // الإيميل الذي قمت بمصادقة نطاقه
   };
+  sendSmtpEmail.to = [{ email: user.email }];
+  sendSmtpEmail.subject = ' Activate Your Account';
 
-  // 4. إرسال الإيميل
-  await transporter.sendMail(mailOptions);
+  // استخدام كود HTML الموجود لديك
+  sendSmtpEmail.htmlContent = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
+            <h2 style="color: #0056d2;">Account Activation</h2>
+            <p>Dear ${user.FirstName || 'User'},</p>
+            <p>Thank you for registering. Please click the button below to **activate your account** and start using our services. The link is valid for **24 hours**.</p>
+            <div style="text-align: center; margin: 25px 0;">
+                <a href="${activationURL}"
+                    style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
+                >Activate My Account</a>
+            </div>
+            <p>If you did not register, please ignore this message.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
+        </div>
+    `;
+
+  // 5. إرسال الإيميل عبر API
+  try {
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('API email sent successfully using Brevo.');
+  } catch (error) {
+    // يمكنك وضع معالجة أخطاء أفضل هنا
+    console.error('Error sending Brevo API email:', error.response ? error.response.text : error);
+    throw new Error('Failed to send activation email via Brevo API.');
+  }
 };
 
 
@@ -148,7 +160,7 @@ const activateAccount = async (req, res) => {
 
     // 4. التوجيه إلى صفحة تسجيل الدخول (كما طلبت)
     // قم بتغيير /accounts/login/ إلى المسار الصحيح لديك
-    res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
+    res.redirect('http://localhost:3000/accounts/login/?activated=true');
 
   } catch (error) {
     console.error('Activation error:', error);
@@ -292,34 +304,37 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // 4. 🔗 بناء رابط إعادة التعيين
-    const resetURL = `https://cambridgeksa.org/reset-password/${resetToken}`;
+    const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
 
-    // 5. 📧 إعداد محتوى الإيميل (بصيغة مناسبة لإعادة تعيين كلمة المرور)
-    const mailOptions = {
-      // استخدام الإعدادات التي أرسلتها في `from`
-      from: `"Cambridge Support" <support@cambridgeksa.org>`, // support@cambridgeksa.org
-      to: user.email, // يجب أن يُرسل إلى المستخدم الذي طلب إعادة التعيين، وليس إلى support
-      subject: 'Reset Password Request',
-      html: `
-                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
-    <h2 style="color: #0056d2;">Password Reset</h2>
-    <p>Dear ${user.name || 'User'},</p>
-    <p>We received a request to reset the password for your account registered with this email: <strong>${user.email}</strong>.</p>
-    <p>To reset your password, please click the button below. This link is only valid for **10 minutes**.</p>
-    <div style="text-align: center; margin: 25px 0;">
-        <a href="${resetURL}" 
-           style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
-           >Click to Reset Password</a>
-    </div>
-    <p>If you did not request a password reset, please ignore this message.</p>
-    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-    <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
-    </div>
-            `,
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+    sendSmtpEmail.sender = {
+      name: "Cambridge Support",
+      email: "support@cambridgeksa.org"
     };
 
-    // 6. 🚀 إرسال الإيميل
-    await transporter.sendMail(mailOptions);
+    // 5. 📧 إعداد محتوى الإيميل (بصيغة مناسبة لإعادة تعيين كلمة المرور)
+    sendSmtpEmail.to = [{ email: user.email }];
+    sendSmtpEmail.subject = 'Reset Password Request';
+    sendSmtpEmail.htmlContent = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
+            <h2 style="color: #0056d2;">Password Reset</h2>
+            <p>Dear ${user.FirstName || 'User'},</p>
+            <p>We received a request to reset the password for your account registered with this email: <strong>${user.email}</strong>.</p>
+            <p>To reset your password, please click the button below. This link is only valid for **10 minutes**.</p>
+            <div style="text-align: center; margin: 25px 0;">
+                <a href="${resetURL}" 
+                    style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
+                >Click to Reset Password</a>
+            </div>
+            <p>If you did not request a password reset, please ignore this message.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
+        </div>
+    `;
+
+    // 6. 🚀 إرسال الإيميل عبر API
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
 
     // 7. ✅ إرسال رد النجاح
     res.status(200).json({
@@ -425,32 +440,27 @@ const contactForm = async (req, res) => {
   try {
     const { name, email, accountEmail, helpTopic, subject, description } = req.body;
 
-    const mailOptions = {
-      from: `"Cambridge Support" <support@cambridgeksa.org>`,
-      to: "support@cambridgeksa.org",
-      replyTo: email,
-      subject: `Contact Form — ${subject}`,
-      html: `
-        <h2>New Support Message</h2>
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
 
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>User Email:</strong> ${email}</p>
-        <p><strong>Account Email:</strong> ${accountEmail}</p>
-        <p><strong>Help Topic:</strong> ${helpTopic || "None"}</p>
-        <p><strong>Description:</strong><br>${description}</p>
-      `,
+    sendSmtpEmail.sender = {
+      name: "Cambridge Support",
+      email: "support@cambridgeksa.org" // نستخدم الايميل الموثق كمرسل أساسي
     };
 
-    if (req.file) {
-      mailOptions.attachments = [
-        {
-          filename: req.file.originalname,
-          path: req.file.path,
-        },
-      ];
-    }
+    sendSmtpEmail.to = [{ email: "support@cambridgeksa.org" }]; // الإرسال إلى إيميل الدعم الخاص بك
+    sendSmtpEmail.replyTo = { email: email, name: name }; // الرد يكون على إيميل المستخدم
+    sendSmtpEmail.subject = `Contact Form — ${subject}`;
 
-    await transporter.sendMail(mailOptions);
+    sendSmtpEmail.htmlContent = `
+        <h2>New Support Message</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>User Email:</strong> ${email}</p>
+        <p><strong>Account Email:</strong> ${accountEmail}</p>
+        <p><strong>Help Topic:</strong> ${helpTopic || "None"}</p>
+        <p><strong>Description:</strong><br>${description}</p>
+    `;
+
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
 
     return res.status(200).json({ message: "Message sent successfully!" });
 
@@ -695,47 +705,47 @@ const getActivatedResources = async (req, res) => {
 
 
 downloadResourceFile = async (req, res) => {
-    try {
-        const { type, resourceId , audioId } = req.params;
+  try {
+    const { type, resourceId, audioId } = req.params;
 
-        // جبنا الريسورس الأساسي
-        const resource = await Resource.findById(resourceId);
-        if (!resource) {
-            return res.status(404).json({ message: "Resource not found" });
-        }
-
-        let filePath = null;
-
-        // --- Handle Book Download ---
-        if (type === "book") {
-            filePath = resource.bookPath;
-        }
-
-        // --- Handle Audio Download ---
-        if (type === "audio") {
-            const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
-            if (audioObj) filePath = audioObj.path;
-        }
-
-        // --- Handle Video Download ---
-        if (type === "video") {
-            const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
-            if (videoObj) filePath = videoObj.path;
-        }
-
-        if (!filePath) {
-            return res.status(404).json({ message: "File not found" });
-        }
-
-        // Convert relative path → absolute
-        const absolutePath = path.join(__dirname, "..", filePath);
-
-        return res.download(absolutePath); // يرسل الملف دايركت للتحميل
+    // جبنا الريسورس الأساسي
+    const resource = await Resource.findById(resourceId);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
     }
-    catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Download error" });
+
+    let filePath = null;
+
+    // --- Handle Book Download ---
+    if (type === "book") {
+      filePath = resource.bookPath;
     }
+
+    // --- Handle Audio Download ---
+    if (type === "audio") {
+      const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
+      if (audioObj) filePath = audioObj.path;
+    }
+
+    // --- Handle Video Download ---
+    if (type === "video") {
+      const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
+      if (videoObj) filePath = videoObj.path;
+    }
+
+    if (!filePath) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    // Convert relative path → absolute
+    const absolutePath = path.join(__dirname, "..", filePath);
+
+    return res.download(absolutePath); // يرسل الملف دايركت للتحميل
+  }
+  catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Download error" });
+  }
 };
 
 
