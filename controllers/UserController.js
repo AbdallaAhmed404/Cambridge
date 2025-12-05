@@ -90,7 +90,7 @@ const sendActivationEmail = async (user) => {
   await user.save({ validateBeforeSave: false });
 
   // 3. بناء الرابط - **مهم: استخدام BASE_URL من متغيرات البيئة**
-  const BASE_URL = 'https://cambridgeksa.org';
+  const BASE_URL = 'http://localhost:3000';
   const activationURL = `${BASE_URL}/activate-account/${activationToken}`;
 
   // 4. إعداد بيانات رسالة Brevo API
@@ -132,7 +132,6 @@ const sendActivationEmail = async (user) => {
 };
 
 
-
 const activateAccount = async (req, res) => {
   const { token } = req.params;
 
@@ -158,11 +157,13 @@ const activateAccount = async (req, res) => {
     user.activationExpires = undefined;
     await user.save();
 
-    res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
+    res.status(200).json({ success: true, message: "Account activated successfully." });
+
 
   } catch (error) {
     console.error('Activation error:', error);
-    return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
+    return res.status(400).json({ success: false, message: "The activation link is invalid or has expired. Please request a resend." });
+
   }
 };
 
@@ -302,7 +303,7 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // 4. 🔗 بناء رابط إعادة التعيين
-    const resetURL = `https://cambridgeksa.org/reset-password/${resetToken}`;
+    const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
 
     const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
 
