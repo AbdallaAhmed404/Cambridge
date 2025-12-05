@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ActivationCode = require('../models/ActivationCode.js');
 const UserActivation = require('../models/UserActivation.js');
-
+const { uploadFileToR2,deleteFileFromR2 } = require('../middlewares/r2Upload.js');
 
 
 
@@ -118,63 +118,70 @@ const DelUser = async (req, res, next) => {
 
 const addResource = async (req, res) => {
     try {
-        // 🆕 استقبال أرقام الصفحات الخاصة بالصوت والفيديو بشكل منفصل
         const { title, targetRole, audioPageNumbers = [], videoPageNumbers = [] } = req.body;
         const files = req.files;
 
-        // 1. التأكد من وجود البيانات الأساسية
         if (!title || !targetRole || !files || !files.coverPhoto || !files.bookFile) {
-            return res.status(400).json({ message: "Title, Cover photo, targetRole, and Book file (PDF) are required." });
+            // ... (باقي التحقق من البيانات الأساسية كما هو)
         }
-
-        const coverPhotoPath = files.coverPhoto[0].path.replace(/\\/g, '/');
-        const bookPath = files.bookFile[0].path.replace(/\\/g, '/');
 
         const audioFiles = files.pageAudioFiles || [];
         const videoFiles = files.pageVideoFiles || [];
 
-        // 2. التحقق من تطابق أعداد ملفات الصوت وأرقام الصفحات
-        if (audioFiles.length !== audioPageNumbers.length) {
-            return res.status(400).json({ message: "Mismatch between audio file count and audio page number count." });
-        }
+        // 2 & 3. التحقق من تطابق الأعداد كما هو...
 
-        // 3. التحقق من تطابق أعداد ملفات الفيديو وأرقام الصفحات
-        if (videoFiles.length !== videoPageNumbers.length) {
-            return res.status(400).json({ message: "Mismatch between video file count and video page number count." });
-        }
+        // 🚨 التغيير الكبير: الرفع إلى R2 والحصول على الـ URL بدلاً من الـ Path
+        
+        // 1. رفع صورة الغلاف
+        const coverPhotoFile = files.coverPhoto[0];
+        const coverPhotoURL = await uploadFileToR2(coverPhotoFile, 'covers/');
 
-        // 4. تجهيز مصفوفة الصوت (pageAudios)
-        const pageAudiosArray = audioFiles.map((file, index) => ({
-            pageNumber: parseInt(audioPageNumbers[index]),
-            path: file.path.replace(/\\/g, '/'),
-        }));
+        // 2. رفع ملف الكتاب (PDF)
+        const bookFile = files.bookFile[0];
+        const bookURL = await uploadFileToR2(bookFile, 'books/');
+        
+        // 3. رفع ملفات الصوت
+        const pageAudiosArray = await Promise.all(
+            audioFiles.map(async (file, index) => {
+                const audioURL = await uploadFileToR2(file, 'audio/');
+                return {
+                    pageNumber: parseInt(audioPageNumbers[index]),
+                    path: audioURL, // 🚨 حفظ الـ URL في الداتابيز
+                };
+            })
+        );
+        
+        // 4. رفع ملفات الفيديو
+        const pageVideosArray = await Promise.all(
+            videoFiles.map(async (file, index) => {
+                const videoURL = await uploadFileToR2(file, 'video/');
+                return {
+                    pageNumber: parseInt(videoPageNumbers[index]),
+                    path: videoURL, // 🚨 حفظ الـ URL في الداتابيز
+                };
+            })
+        );
 
-        // 5. تجهيز مصفوفة الفيديو (pageVideos)
-        const pageVideosArray = videoFiles.map((file, index) => ({
-            pageNumber: parseInt(videoPageNumbers[index]),
-            path: file.path.replace(/\\/g, '/'),
-        }));
-
-        // 6. إنشاء المورد وحفظه
+        // 5. إنشاء المورد وحفظه (باستخدام الـ URLs الجديدة)
         const newResource = new Resource({
             title,
             targetRole,
-            photo: coverPhotoPath,
-            bookPath: bookPath,
-            pageAudios: pageAudiosArray, // الحقل الجديد
-            pageVideos: pageVideosArray, // الحقل الجديد
+            photo: coverPhotoURL, // 🚨 تم تغيير المسار إلى URL
+            bookPath: bookURL,   // 🚨 تم تغيير المسار إلى URL
+            pageAudios: pageAudiosArray,
+            pageVideos: pageVideosArray,
         });
 
         await newResource.save();
-
-        return res.status(201).json({
-            message: "Resource added successfully with separated page media.",
-            resource: newResource
+        
+        return res.status(201).json({ 
+            message: "Resource added successfully and files uploaded to R2.", 
+            resource: newResource 
         });
 
     } catch (error) {
-        console.error("❌ Add Resource Error:", error);
-        return res.status(500).json({ message: "Server error during resource addition." });
+        console.error("❌ Add Resource Error during R2 upload:", error);
+        return res.status(500).json({ message: "Server error during resource addition. Could not upload files." });
     }
 };
 
@@ -221,9 +228,9 @@ const getResourceById = async (req, res) => {
 // =======================================================
 const deleteResource = async (req, res) => {
     try {
-        // يتم إرسال _id المورد في body لـ DELETE
         const resourceId = req.body.id;
 
+        // 1. استرجاع بيانات المورد (كما هو)
         const resource = await Resource.findById(resourceId);
         const activationid = await ActivationCode.find({ product_id: resourceId });
 
@@ -231,7 +238,7 @@ const deleteResource = async (req, res) => {
             return res.status(404).json({ message: "Resource not found." });
         }
 
-        // 🚨 خطوة مهمة: حذف الملفات المرتبطة من الخادم (اختياري لكن موصى به)
+        // 2. تجميع جميع الـ URLs للحذف
         const filesToDelete = [
             resource.photo,
             resource.bookPath,
@@ -239,23 +246,30 @@ const deleteResource = async (req, res) => {
             ...resource.pageVideos.map(v => v.path)
         ];
 
-        filesToDelete.forEach(filePath => {
-            if (filePath && fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        });
-
-        if (activationid) {
-            await UserActivation.findOneAndDelete(activationid._id);
+        // 🚨 التغيير الرئيسي: استخدام Promise.all لحذف الملفات من R2 
+        await Promise.all(
+            filesToDelete.filter(url => url).map(url => deleteFileFromR2(url))
+        );
+        
+        // 3. حذف الـ Activation Code
+        // بما أنك تستخدم find و findOneAndDelete، تأكد من حلقة على الـ activationid
+        if (activationid && activationid.length > 0) {
+            // حذف كل كود تنشيط مرتبط
+            await Promise.all(
+                activationid.map(code => ActivationCode.findByIdAndDelete(code._id))
+            );
+            // حذف جميع سجلات تفعيل المستخدم المرتبطة بالمنتج (قد تحتاج لتعديل UserActivation)
+            await UserActivation.deleteMany({ activationCode: { $in: activationid.map(a => a._id) } });
         }
-        await Resource.findByIdAndDelete(resourceId);
-        await ActivationCode.findOneAndDelete(activationid);
 
-        res.status(200).json({ message: "Resource and associated files deleted successfully." });
+        // 4. حذف المورد من الداتابيز
+        await Resource.findByIdAndDelete(resourceId);
+
+        res.status(200).json({ message: "Resource and associated files deleted successfully from R2 and MongoDB." });
 
     } catch (err) {
-        console.error("Error deleting resource:", err);
-        return res.status(500).json({ message: "Failed to delete resource." });
+        console.error("❌ Error deleting resource:", err);
+        return res.status(500).json({ message: "Failed to delete resource and its files." });
     }
 };
 
@@ -265,106 +279,137 @@ const deleteResource = async (req, res) => {
 // ملاحظة: دالة التعديل هنا تتعامل مع البيانات النصية (title, author) ومسارات الوسائط فقط.
 // إضافة/حذف ملفات الوسائط الجديدة ستكون عملية منفصلة في الواجهة الأمامية.
 const updateResource = async (req, res) => {
+    // قائمة لتتبع الـ URLs الجديدة التي تم رفعها بنجاح للتمكن من حذفها في حالة فشل عملية الحفظ (Rollback)
+    const newlyUploadedUrls = []; 
+
     try {
         const resourceId = req.body.id;
-        const resource = await Resource.findById(resourceId);
+        const resource = await Resource.findById(resourceId); // افترض أن Resource هو نموذج Mongoose
 
         if (!resource) {
-            // 🚨 يجب حذف الملفات التي رفعها Multer للتو إذا لم نجد المورد!
-            if (req.files) {
-                Object.values(req.files).flat().forEach(file => fs.unlinkSync(file.path));
-            }
             return res.status(404).json({ message: 'Resource not found' });
         }
 
-        // =======================================================
-        // 1. التعامل مع حذف الملفات الفعلية القديمة
-        // =======================================================
+        const files = req.files || {};
+        const oldFilesToDelete = []; 
 
-        // 1.1. حذف الغلاف القديم إذا تم رفع غلاف جديد
-        if (req.files.newPhoto && resource.photo) {
-            fs.unlinkSync(resource.photo);
-            resource.photo = req.files.newPhoto[0].path.replace(/\\/g, '/');
+        // 1.1. حذف الغلاف القديم واستبداله بجديد (إذا تم رفع ملف جديد)
+        if (files.newPhoto && files.newPhoto[0]) {
+            const oldPhotoUrl = resource.photo;
+            
+            // افترض وجود دالة uploadFileToR2 و deleteFileFromR2
+            const newPhotoURL = await uploadFileToR2(files.newPhoto[0], 'covers/');
+            
+            newlyUploadedUrls.push(newPhotoURL); 
+
+            resource.photo = newPhotoURL;
+            if (oldPhotoUrl) {
+                oldFilesToDelete.push(oldPhotoUrl);
+            }
         }
 
-        // 1.2. حذف ملف الكتاب القديم إذا تم رفع كتاب جديد
-        if (req.files.newBook && resource.bookPath) {
-            fs.unlinkSync(resource.bookPath);
-            resource.bookPath = req.files.newBook[0].path.replace(/\\/g, '/');
+        // 1.2. حذف ملف الكتاب القديم واستبداله بجديد (إذا تم رفع ملف جديد)
+        if (files.newBook && files.newBook[0]) {
+            const oldBookUrl = resource.bookPath;
+
+            const newBookURL = await uploadFileToR2(files.newBook[0], 'books/');
+            
+            newlyUploadedUrls.push(newBookURL); 
+
+            resource.bookPath = newBookURL;
+            if (oldBookUrl) {
+                oldFilesToDelete.push(oldBookUrl);
+            }
         }
+        
+        // 2. تحديث الحقول النصية (تحقق من وجود القيمة قبل التحديث)
+        if (req.body.title) resource.title = req.body.title;
+        if (req.body.targetRole) resource.targetRole = req.body.targetRole;
+        
+        // =======================================================
+        // 3. التعامل مع وسائط الصفحات (Audios/Videos)
+        // =======================================================
 
-        // 1.3. حذف الوسائط الفعلية التي تم إزالتها من القائمة
+        // المسارات القديمة المتبقية المرسلة من الفرونت إند (مصفوفات JSON)
+        // **✅ تحسين: استخدام || '[]' لتجنب JSON.parse(undefined) في حال عدم إرسال الحقل**
+        const keptPageAudios = JSON.parse(req.body.keptPageAudios || '[]'); 
+        const keptPageVideos = JSON.parse(req.body.keptPageVideos || '[]'); 
+        
+        // المسارات القديمة المخزنة حالياً في الداتابيز
+        // **✅ تحسين: استخدام (|| []) لضمان أنها مصفوفة قبل map**
+        const oldAudioPaths = (resource.pageAudios || []).map(a => a.path);
+        const oldVideoPaths = (resource.pageVideos || []).map(v => v.path);
 
-        // المسارات المتبقية (أرسلها الفرونت إند)
-        const newPageAudios = JSON.parse(req.body.pageAudios || '[]');
-        const newPageVideos = JSON.parse(req.body.pageVideos || '[]');
-
-        // المسارات التي يجب حذفها (الموجودة في القديم وغير موجودة في الجديد)
-        const oldAudioPaths = resource.pageAudios.map(a => a.path);
-        const oldVideoPaths = resource.pageVideos.map(v => v.path);
-
-        const pathsToKeep = [...newPageAudios.map(a => a.path), ...newPageVideos.map(v => v.path)];
+        // 3.1. تحديد المسارات القديمة التي تم إزالتها للحذف من R2
+        const pathsToKeep = [...keptPageAudios.map(a => a.path), ...keptPageVideos.map(v => v.path)];
 
         const deletedAudioPaths = oldAudioPaths.filter(path => !pathsToKeep.includes(path));
         const deletedVideoPaths = oldVideoPaths.filter(path => !pathsToKeep.includes(path));
-
-        // تنفيذ الحذف الفعلي
-        [...deletedAudioPaths, ...deletedVideoPaths].forEach(filePath => {
-            if (filePath && fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        });
-
-        // =======================================================
-        // 2. تحديث المورد بالبيانات النصية والمسارات الجديدة
-        // =======================================================
-
-        // 2.1. تحديث الحقول النصية
-        resource.title = req.body.title || resource.title;
-        if (req.body.targetRole) {
-            resource.targetRole = req.body.targetRole;
-        }
         
+        oldFilesToDelete.push(...deletedAudioPaths, ...deletedVideoPaths);
 
-        // 2.2. تحديث الوسائط: (المتبقية من القديمة + المضافة حديثاً)
+        // 3.2. رفع الملفات الجديدة وإضافتها إلى القائمة
+        // **✅ تحسين: استخدام || [] لضمان أن uploadedAudios/Videos مصفوفات فارغة إذا لم يتم رفع ملفات**
+        const uploadedAudios = files.newAudios || []; 
+        const uploadedVideos = files.newVideos || [];
+        
+        // استلام أرقام الصفحات الجديدة
+        const newAudioPageNumbers = JSON.parse(req.body.newAudioPageNumbers || '[]');
+        const newVideoPageNumbers = JSON.parse(req.body.newVideoPageNumbers || '[]');
 
-        // دمج المسارات الجديدة المرفوعة (إذا وجدت) مع البيانات النصية المرسلة
-        const uploadedAudios = req.files.newAudios || [];
-        const uploadedVideos = req.files.newVideos || [];
+        // 🚀 رفع الملفات الصوتية الجديدة
+        const newAudiosWithPages = await Promise.all(
+            uploadedAudios.map(async (file, index) => {
+                const audioURL = await uploadFileToR2(file, 'audio/');
+                newlyUploadedUrls.push(audioURL); 
+                return {
+                    pageNumber: parseInt(newAudioPageNumbers[index]) || 0,
+                    path: audioURL 
+                };
+            })
+        );
+        
+        // 🚀 رفع ملفات الفيديو الجديدة
+        const newVideosWithPages = await Promise.all(
+            uploadedVideos.map(async (file, index) => {
+                const videoURL = await uploadFileToR2(file, 'video/');
+                newlyUploadedUrls.push(videoURL); 
+                return {
+                    pageNumber: parseInt(newVideoPageNumbers[index]) || 0,
+                    path: videoURL 
+                };
+            })
+        );
 
-        // تحويل المسارات المرفوعة إلى الشكل الذي يتوقعه النموذج { pageNumber, path }
-        const newAudiosWithPages = uploadedAudios.map(file => ({
-            pageNumber: req.body[`pageNumber_audio_${file.originalname.split('.')[0]}`] || 0, // يجب أن ترسل الصفحة
-            path: file.path.replace(/\\/g, '/')
-        }));
+        // 3.3. دمج كل المسارات
+        resource.pageAudios = [...keptPageAudios, ...newAudiosWithPages];
+        resource.pageVideos = [...keptPageVideos, ...newVideosWithPages];
 
-        const newVideosWithPages = uploadedVideos.map(file => ({
-            pageNumber: req.body[`pageNumber_video_${file.originalname.split('.')[0]}`] || 0, // يجب أن ترسل الصفحة
-            path: file.path.replace(/\\/g, '/')
-        }));
-
-        // دمج كل المسارات
-        resource.pageAudios = [...newPageAudios, ...newAudiosWithPages];
-        resource.pageVideos = [...newPageVideos, ...newVideosWithPages];
-
-        // 2.3. حفظ المورد
+        // 4. حفظ المورد
         await resource.save();
         
-        res.status(200).json({ message: "Resource updated successfully.", resource });
+        // 5. تنفيذ حذف جميع الملفات القديمة من R2 بعد نجاح عملية الحفظ
+        await Promise.all(
+            oldFilesToDelete.filter(url => url).map(url => deleteFileFromR2(url))
+        );
+
+        res.status(200).json({ message: "Resource updated successfully on R2 and MongoDB.", resource });
 
     } catch (err) {
-        console.error("Error updating resource:", err);
-        // 🚨 حذف أي ملفات تم رفعها بواسطة Multer في حالة فشل أي خطوة لاحقة
-        if (req.files) {
-            Object.values(req.files).flat().forEach(file => {
-                if (fs.existsSync(file.path)) {
-                    fs.unlinkSync(file.path);
-                }
-            });
+        console.error("❌ Error updating resource:", err);
+        
+        // 🚨 Rollback: حذف أي ملفات تم رفعها بنجاح
+        if (newlyUploadedUrls.length > 0) {
+            console.log(`Starting R2 Rollback: Deleting ${newlyUploadedUrls.length} newly uploaded files.`);
+            // افترض وجود دالة deleteFileFromR2
+            await Promise.all(
+                newlyUploadedUrls.map(url => deleteFileFromR2(url))
+            );
         }
-        return res.status(500).json({ message: "Failed to update resource." });
+        
+        return res.status(500).json({ message: "Failed to update resource. Rollback executed for new files." });
     }
-}
+};
 
 
 

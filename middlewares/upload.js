@@ -1,38 +1,11 @@
 // middleware/upload.js
 const multer = require("multer");
-const path = require("path");
+// const path = require("path"); // لم نعد نحتاجه
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        let folder = "uploads/"; // المجلد الرئيسي الافتراضي
-
-        // 🆕 1. توجيه خاص لنموذج الموارد (Resource Form)
-        if (file.fieldname === 'coverPhoto') {
-            folder = 'uploads/covers/';
-        } else if (file.fieldname === 'bookFile') {
-            folder = 'uploads/books/';
-        } 
-        // 👇 الحقول الجديدة التي تستقبل ملفات متعددة (مصفوفات)
-        else if (file.fieldname === 'pageAudioFiles') { 
-            folder = 'uploads/audio/';
-        } else if (file.fieldname === 'pageVideoFiles') { 
-            folder = 'uploads/video/';
-        } 
-        // 🆕 2. توجيه خاص بنموذج المساعدة (Contact Form)
-        else if (file.fieldname === 'attachment') {
-            folder = 'uploads/attachments/';
-        }
-        
-        // 🚨 تأكد من إنشاء هذه المجلدات: uploads/covers/, uploads/books/, uploads/audio/, uploads/video/, uploads/attachments/
-
-        cb(null, folder);
-    },
-    
-    filename: (req, file, cb) => {
-        // تسمية الملف: اسم الحقل + الوقت + الامتداد
-        cb(null, file.fieldname + "-" + Date.now() + path.extname(file.originalname));
-    },
-});
+// 🚨 التغيير الأساسي: استخدام multer.memoryStorage
+// هذا سيخزن الملفات في ذاكرة الخادم مؤقتاً قبل إرسالها إلى R2.
+// هذا ضروري لأننا لا نستطيع استخدام التخزين المحلي (diskStorage) على Railway.
+const storage = multer.memoryStorage();
 
 const upload = multer({ 
     storage,
@@ -44,7 +17,6 @@ const upload = multer({
 const resourceUpload = upload.fields([
     { name: 'coverPhoto', maxCount: 1 },
     { name: 'bookFile', maxCount: 1 },
-    // 🆕 حقول منفصلة لاستقبال الملفات
     { name: 'pageAudioFiles', maxCount: 500 }, 
     { name: 'pageVideoFiles', maxCount: 500 } 
 ]);

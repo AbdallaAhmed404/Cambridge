@@ -8,6 +8,7 @@ const Resource = require('../models/ResourceModel');
 const ActivationCode = require('../models/ActivationCode');
 const UserActivation = require('../models/UserActivation');
 const SibApiV3Sdk = require('@sendinblue/client');
+const axios = require('axios');
 
 
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
@@ -704,49 +705,68 @@ const getActivatedResources = async (req, res) => {
 };
 
 
+// ... (Imports: path, Resource, etc. assumed)
 downloadResourceFile = async (req, res) => {
-  try {
-    const { type, resourceId, audioId } = req.params;
+    try {
+        const { type, resourceId, audioId } = req.params;
+        const resource = await Resource.findById(resourceId);
 
-    // جبنا الريسورس الأساسي
-    const resource = await Resource.findById(resourceId);
-    if (!resource) {
-      return res.status(404).json({ message: "Resource not found" });
+        if (!resource) {
+            return res.status(404).json({ message: "Resource not found" });
+        }
+
+        let filePath = null;
+        let suggestedFileName = "resource_file"; // اسم افتراضي للملف
+
+        // --- تحديد المسار واسم الملف المقترح ---
+        if (type === "book") {
+            filePath = resource.bookPath;
+            suggestedFileName = `${resource.title}-Book.pdf`;
+        } else if (type === "audio") {
+            const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
+            if (audioObj) {
+                filePath = audioObj.path;
+                suggestedFileName = `${resource.title}-Page-${audioObj.pageNumber}.mp3`;
+            }
+        } else if (type === "video") {
+            const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
+            if (videoObj) {
+                filePath = videoObj.path;
+                suggestedFileName = `${resource.title}-Page-${videoObj.pageNumber}.mp4`;
+            }
+        }
+
+        if (!filePath) {
+            return res.status(404).json({ message: "File not found" });
+        }
+
+        // ⭐ التغيير الرئيسي: استخدام axios لجلب الملف وإرساله
+
+        // 1. جلب بيانات الملف من رابط Cloudflare R2
+        const response = await axios({
+            method: 'get',
+            url: filePath, // رابط Cloudflare R2
+            responseType: 'stream' // لتجنب استهلاك الذاكرة العالية
+        });
+
+        // 2. تعيين الـ Headers التي تجبر المتصفح على التحميل
+        res.setHeader('Content-Type', response.headers['content-type']);
+        res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
+        
+        // 3. توجيه محتوى الملف مباشرة إلى الـ Response
+        response.data.pipe(res);
+        
     }
-
-    let filePath = null;
-
-    // --- Handle Book Download ---
-    if (type === "book") {
-      filePath = resource.bookPath;
+    catch (err) {
+        console.error("Download error:", err);
+        // في حالة وجود خطأ في جلب الملف من R2 (مثل 404 أو timeout)
+        if (err.response && err.response.status) {
+             return res.status(err.response.status).json({ message: "Error fetching file from Cloud Storage." });
+        }
+        res.status(500).json({ message: "Download error" });
     }
-
-    // --- Handle Audio Download ---
-    if (type === "audio") {
-      const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
-      if (audioObj) filePath = audioObj.path;
-    }
-
-    // --- Handle Video Download ---
-    if (type === "video") {
-      const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
-      if (videoObj) filePath = videoObj.path;
-    }
-
-    if (!filePath) {
-      return res.status(404).json({ message: "File not found" });
-    }
-
-    // Convert relative path → absolute
-    const absolutePath = path.join(__dirname, "..", filePath);
-
-    return res.download(absolutePath); // يرسل الملف دايركت للتحميل
-  }
-  catch (err) {
-    console.log(err);
-    res.status(500).json({ message: "Download error" });
-  }
 };
+// ...
 
 
 
