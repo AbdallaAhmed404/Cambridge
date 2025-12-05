@@ -152,10 +152,6 @@ const activateAccount = async (req, res) => {
       return res.status(400).send("Account already activated.");
     }
 
-    // 4️⃣ تحقق من تاريخ انتهاء صلاحية التفعيل لو حابب
-    if (user.activationExpires && user.activationExpires < Date.now()) {
-      return res.status(400).send("Activation link has expired. Please request a new one.");
-    }
 
     // 5️⃣ فعل الحساب
     user.isActive = true;
