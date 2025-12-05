@@ -136,9 +136,14 @@ const activateAccount = async (req, res) => {
   const { token } = req.params;
 
   try {
-    // 1. التحقق من التوكن وصلاحيته في قاعدة البيانات
+    // تحقق من التوكن
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.id;
+
+    // البحث عن المستخدم وتأكيد أنه لم يتم تفعيله
     const user = await User.findOne({
-      activationToken: token,
+      _id: userId,
+      isActive: false,
       activationExpires: { $gt: Date.now() }
     });
 
@@ -146,26 +151,17 @@ const activateAccount = async (req, res) => {
       return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
     }
 
-    // 2. التحقق من توقيع التوكن
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-      if (err || decoded.id.toString() !== user._id.toString()) {
-        return res.status(401).send("The activation link is invalid or has expired. Please request a resend.");
-      }
-    });
-
-    // 3. تفعيل الحساب ومسح التوكن
-    user.isActive = true; // ✅ تفعيل المستخدم
+    // تفعيل الحساب
+    user.isActive = true;
     user.activationToken = undefined;
     user.activationExpires = undefined;
     await user.save();
 
-    // 4. التوجيه إلى صفحة تسجيل الدخول (كما طلبت)
-    // قم بتغيير /accounts/login/ إلى المسار الصحيح لديك
     res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
     console.error('Activation error:', error);
-    res.status(500).send("An error occurred during activation.");
+    return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
   }
 };
 
