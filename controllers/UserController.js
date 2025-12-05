@@ -90,7 +90,7 @@ const sendActivationEmail = async (user) => {
   await user.save({ validateBeforeSave: false });
 
   // 3. بناء الرابط - **مهم: استخدام BASE_URL من متغيرات البيئة**
-  const BASE_URL = 'http://localhost:3000';
+  const BASE_URL = 'https://cambridgeksa.org';
   const activationURL = `${BASE_URL}/activate-account/${activationToken}`;
 
   // 4. إعداد بيانات رسالة Brevo API
@@ -303,7 +303,7 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // 4. 🔗 بناء رابط إعادة التعيين
-    const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
+    const resetURL = `https://cambridgeksa.org/reset-password/${resetToken}`;
 
     const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
 
