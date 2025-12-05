@@ -77,43 +77,57 @@ const checkActivationCode = async (req, res) => {
 };
 
 const sendActivationEmail = async (user) => {
+  // 1. إنشاء توكن التفعيل (الكود كما هو)
   const activationToken = jwt.sign(
     { id: user._id },
     process.env.JWT_SECRET,
-    { expiresIn: '24h' } // صالح لمدة 24 ساعة
+    { expiresIn: '24h' }
   );
 
-  // تخزين التوكن لو حابب (اختياري)
+  // 2. حفظ التوكن في قاعدة البيانات (الكود كما هو)
   user.activationToken = activationToken;
-  user.activationExpires = Date.now() + 24*60*60*1000;
+  user.activationExpires = Date.now() + (24 * 60 * 60 * 1000);
   await user.save({ validateBeforeSave: false });
 
+  // 3. بناء الرابط - **مهم: استخدام BASE_URL من متغيرات البيئة**
   const BASE_URL = 'https://cambridgeksa.org';
   const activationURL = `${BASE_URL}/activate-account/${activationToken}`;
 
+  // 4. إعداد بيانات رسالة Brevo API
   const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-  sendSmtpEmail.sender = { name: "Cambridge Support", email: "support@cambridgeksa.org" };
-  sendSmtpEmail.to = [{ email: user.email }];
-  sendSmtpEmail.subject = 'Activate Your Account';
-  sendSmtpEmail.htmlContent = `
-    <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
-        <h2 style="color: #0056d2;">Account Activation</h2>
-        <p>Dear ${user.FirstName || 'User'},</p>
-        <p>Click below to activate your account. Link valid for 24 hours.</p>
-        <div style="text-align: center; margin: 25px 0;">
-            <a href="${activationURL}" style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;">
-              Activate My Account
-            </a>
-        </div>
-    </div>
-  `;
 
+  sendSmtpEmail.sender = {
+    name: "Cambridge Support",
+    email: "support@cambridgeksa.org" // الإيميل الذي قمت بمصادقة نطاقه
+  };
+  sendSmtpEmail.to = [{ email: user.email }];
+  sendSmtpEmail.subject = ' Activate Your Account';
+
+  // استخدام كود HTML الموجود لديك
+  sendSmtpEmail.htmlContent = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
+            <h2 style="color: #0056d2;">Account Activation</h2>
+            <p>Dear ${user.FirstName || 'User'},</p>
+            <p>Thank you for registering. Please click the button below to **activate your account** and start using our services. The link is valid for **24 hours**.</p>
+            <div style="text-align: center; margin: 25px 0;">
+                <a href="${activationURL}"
+                    style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
+                >Activate My Account</a>
+            </div>
+            <p>If you did not register, please ignore this message.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
+        </div>
+    `;
+
+  // 5. إرسال الإيميل عبر API
   try {
     await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('Activation email sent successfully.');
+    console.log('API email sent successfully using Brevo.');
   } catch (error) {
-    console.error('Error sending email:', error.response?.text || error);
-    throw new Error('Failed to send activation email.');
+    // يمكنك وضع معالجة أخطاء أفضل هنا
+    console.error('Error sending Brevo API email:', error.response ? error.response.text : error);
+    throw new Error('Failed to send activation email via Brevo API.');
   }
 };
 
@@ -123,33 +137,32 @@ const activateAccount = async (req, res) => {
   const { token } = req.params;
 
   try {
-    // 1️⃣ التحقق من صلاحية التوكن
+    // تحقق من التوكن
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.id;
 
-    // 2️⃣ البحث عن المستخدم
-    const user = await User.findById(userId);
-    if (!user) return res.status(400).send("Invalid activation link.");
+    // البحث عن المستخدم وتأكيد أنه لم يتم تفعيله
+    const user = await User.findOne({
+      _id: userId,
+      isActive: false,
+      activationExpires: { $gt: Date.now() }
+    });
 
-    // 3️⃣ التأكد أن الحساب غير مفعل
-    if (user.isActive) return res.status(400).send("Account already activated.");
+    if (!user) {
+      return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
+    }
 
-    // 4️⃣ (اختياري) التحقق من انتهاء الصلاحية
-    if (user.activationExpires && user.activationExpires < Date.now())
-      return res.status(400).send("Activation link expired. Request a new one.");
-
-    // 5️⃣ تفعيل الحساب وحذف التوكن من DB
+    // تفعيل الحساب
     user.isActive = true;
     user.activationToken = undefined;
     user.activationExpires = undefined;
     await user.save();
 
-    // 6️⃣ إعادة التوجيه للـ Login
     res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
-    console.error("Activation error:", error);
-    return res.status(400).send("Invalid or expired activation link.");
+    console.error('Activation error:', error);
+    return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
   }
 };
 
@@ -691,64 +704,64 @@ const getActivatedResources = async (req, res) => {
 
 // ... (Imports: path, Resource, etc. assumed)
 downloadResourceFile = async (req, res) => {
-    try {
-        const { type, resourceId, audioId } = req.params;
-        const resource = await Resource.findById(resourceId);
+  try {
+    const { type, resourceId, audioId } = req.params;
+    const resource = await Resource.findById(resourceId);
 
-        if (!resource) {
-            return res.status(404).json({ message: "Resource not found" });
-        }
-
-        let filePath = null;
-        let suggestedFileName = "resource_file"; // اسم افتراضي للملف
-
-        // --- تحديد المسار واسم الملف المقترح ---
-        if (type === "book") {
-            filePath = resource.bookPath;
-            suggestedFileName = `${resource.title}-Book.pdf`;
-        } else if (type === "audio") {
-            const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
-            if (audioObj) {
-                filePath = audioObj.path;
-                suggestedFileName = `${resource.title}-Page-${audioObj.pageNumber}.mp3`;
-            }
-        } else if (type === "video") {
-            const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
-            if (videoObj) {
-                filePath = videoObj.path;
-                suggestedFileName = `${resource.title}-Page-${videoObj.pageNumber}.mp4`;
-            }
-        }
-
-        if (!filePath) {
-            return res.status(404).json({ message: "File not found" });
-        }
-
-        // ⭐ التغيير الرئيسي: استخدام axios لجلب الملف وإرساله
-
-        // 1. جلب بيانات الملف من رابط Cloudflare R2
-        const response = await axios({
-            method: 'get',
-            url: filePath, // رابط Cloudflare R2
-            responseType: 'stream' // لتجنب استهلاك الذاكرة العالية
-        });
-
-        // 2. تعيين الـ Headers التي تجبر المتصفح على التحميل
-        res.setHeader('Content-Type', response.headers['content-type']);
-        res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
-        
-        // 3. توجيه محتوى الملف مباشرة إلى الـ Response
-        response.data.pipe(res);
-        
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
     }
-    catch (err) {
-        console.error("Download error:", err);
-        // في حالة وجود خطأ في جلب الملف من R2 (مثل 404 أو timeout)
-        if (err.response && err.response.status) {
-             return res.status(err.response.status).json({ message: "Error fetching file from Cloud Storage." });
-        }
-        res.status(500).json({ message: "Download error" });
+
+    let filePath = null;
+    let suggestedFileName = "resource_file"; // اسم افتراضي للملف
+
+    // --- تحديد المسار واسم الملف المقترح ---
+    if (type === "book") {
+      filePath = resource.bookPath;
+      suggestedFileName = `${resource.title}-Book.pdf`;
+    } else if (type === "audio") {
+      const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
+      if (audioObj) {
+        filePath = audioObj.path;
+        suggestedFileName = `${resource.title}-Page-${audioObj.pageNumber}.mp3`;
+      }
+    } else if (type === "video") {
+      const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
+      if (videoObj) {
+        filePath = videoObj.path;
+        suggestedFileName = `${resource.title}-Page-${videoObj.pageNumber}.mp4`;
+      }
     }
+
+    if (!filePath) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    // ⭐ التغيير الرئيسي: استخدام axios لجلب الملف وإرساله
+
+    // 1. جلب بيانات الملف من رابط Cloudflare R2
+    const response = await axios({
+      method: 'get',
+      url: filePath, // رابط Cloudflare R2
+      responseType: 'stream' // لتجنب استهلاك الذاكرة العالية
+    });
+
+    // 2. تعيين الـ Headers التي تجبر المتصفح على التحميل
+    res.setHeader('Content-Type', response.headers['content-type']);
+    res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
+
+    // 3. توجيه محتوى الملف مباشرة إلى الـ Response
+    response.data.pipe(res);
+
+  }
+  catch (err) {
+    console.error("Download error:", err);
+    // في حالة وجود خطأ في جلب الملف من R2 (مثل 404 أو timeout)
+    if (err.response && err.response.status) {
+      return res.status(err.response.status).json({ message: "Error fetching file from Cloud Storage." });
+    }
+    res.status(500).json({ message: "Download error" });
+  }
 };
 // ...
 
