@@ -136,22 +136,28 @@ const activateAccount = async (req, res) => {
   const { token } = req.params;
 
   try {
-    // تحقق من التوكن
+    // 1️⃣ تحقق من التوكن
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.id;
 
-    // البحث عن المستخدم وتأكيد أنه لم يتم تفعيله
-    const user = await User.findOne({
-      _id: userId,
-      isActive: false,
-      activationExpires: { $gt: Date.now() }
-    });
+    // 2️⃣ ابحث عن المستخدم
+    const user = await User.findById(userId);
 
     if (!user) {
-      return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
+      return res.status(400).send("Invalid activation link.");
     }
 
-    // تفعيل الحساب
+    // 3️⃣ تحقق إن الحساب لسه مش مفعل
+    if (user.isActive) {
+      return res.status(400).send("Account already activated.");
+    }
+
+    // 4️⃣ تحقق من تاريخ انتهاء صلاحية التفعيل لو حابب
+    if (user.activationExpires && user.activationExpires < Date.now()) {
+      return res.status(400).send("Activation link has expired. Please request a new one.");
+    }
+
+    // 5️⃣ فعل الحساب
     user.isActive = true;
     user.activationToken = undefined;
     user.activationExpires = undefined;
@@ -160,10 +166,11 @@ const activateAccount = async (req, res) => {
     res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
-    console.error('Activation error:', error);
-    return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
+    console.error("Activation error:", error);
+    return res.status(400).send("Invalid or expired activation link.");
   }
 };
+
 
 
 const register = async (req, res) => {
