@@ -77,88 +77,74 @@ const checkActivationCode = async (req, res) => {
 };
 
 const sendActivationEmail = async (user) => {
-  // 1. إنشاء توكن التفعيل (الكود كما هو)
   const activationToken = jwt.sign(
     { id: user._id },
     process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '24h' } // صالح لمدة 24 ساعة
   );
 
-  // 2. حفظ التوكن في قاعدة البيانات (الكود كما هو)
+  // تخزين التوكن لو حابب (اختياري)
   user.activationToken = activationToken;
-  user.activationExpires = Date.now() + (24 * 60 * 60 * 1000);
+  user.activationExpires = Date.now() + 24*60*60*1000;
   await user.save({ validateBeforeSave: false });
 
-  // 3. بناء الرابط - **مهم: استخدام BASE_URL من متغيرات البيئة**
   const BASE_URL = 'https://cambridgeksa.org';
   const activationURL = `${BASE_URL}/activate-account/${activationToken}`;
 
-  // 4. إعداد بيانات رسالة Brevo API
   const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-
-  sendSmtpEmail.sender = {
-    name: "Cambridge Support",
-    email: "support@cambridgeksa.org" // الإيميل الذي قمت بمصادقة نطاقه
-  };
+  sendSmtpEmail.sender = { name: "Cambridge Support", email: "support@cambridgeksa.org" };
   sendSmtpEmail.to = [{ email: user.email }];
-  sendSmtpEmail.subject = ' Activate Your Account';
-
-  // استخدام كود HTML الموجود لديك
+  sendSmtpEmail.subject = 'Activate Your Account';
   sendSmtpEmail.htmlContent = `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
-            <h2 style="color: #0056d2;">Account Activation</h2>
-            <p>Dear ${user.FirstName || 'User'},</p>
-            <p>Thank you for registering. Please click the button below to **activate your account** and start using our services. The link is valid for **24 hours**.</p>
-            <div style="text-align: center; margin: 25px 0;">
-                <a href="${activationURL}"
-                    style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;"
-                >Activate My Account</a>
-            </div>
-            <p>If you did not register, please ignore this message.</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-            <p style="font-size: 12px; color: #777;">Cambridge Support Team</p>
+    <div style="font-family: sans-serif; padding: 20px; border: 1px solid #0056d2; border-radius: 8px;">
+        <h2 style="color: #0056d2;">Account Activation</h2>
+        <p>Dear ${user.FirstName || 'User'},</p>
+        <p>Click below to activate your account. Link valid for 24 hours.</p>
+        <div style="text-align: center; margin: 25px 0;">
+            <a href="${activationURL}" style="display: inline-block; padding: 12px 25px; font-size: 17px; color: white; background-color: #007bff; text-decoration: none; border-radius: 5px; font-weight: bold;">
+              Activate My Account
+            </a>
         </div>
-    `;
+    </div>
+  `;
 
-  // 5. إرسال الإيميل عبر API
   try {
     await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('API email sent successfully using Brevo.');
+    console.log('Activation email sent successfully.');
   } catch (error) {
-    // يمكنك وضع معالجة أخطاء أفضل هنا
-    console.error('Error sending Brevo API email:', error.response ? error.response.text : error);
-    throw new Error('Failed to send activation email via Brevo API.');
+    console.error('Error sending email:', error.response?.text || error);
+    throw new Error('Failed to send activation email.');
   }
 };
+
 
 
 const activateAccount = async (req, res) => {
   const { token } = req.params;
 
   try {
-    // 1️⃣ تحقق من التوكن
+    // 1️⃣ التحقق من صلاحية التوكن
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decoded.id;
 
-    // 2️⃣ ابحث عن المستخدم
+    // 2️⃣ البحث عن المستخدم
     const user = await User.findById(userId);
+    if (!user) return res.status(400).send("Invalid activation link.");
 
-    if (!user) {
-      return res.status(400).send("Invalid activation link.");
-    }
+    // 3️⃣ التأكد أن الحساب غير مفعل
+    if (user.isActive) return res.status(400).send("Account already activated.");
 
-    // 3️⃣ تحقق إن الحساب لسه مش مفعل
-    if (user.isActive) {
-      return res.status(400).send("Account already activated.");
-    }
+    // 4️⃣ (اختياري) التحقق من انتهاء الصلاحية
+    if (user.activationExpires && user.activationExpires < Date.now())
+      return res.status(400).send("Activation link expired. Request a new one.");
 
-
-    // 5️⃣ فعل الحساب
+    // 5️⃣ تفعيل الحساب وحذف التوكن من DB
     user.isActive = true;
     user.activationToken = undefined;
     user.activationExpires = undefined;
     await user.save();
 
+    // 6️⃣ إعادة التوجيه للـ Login
     res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
@@ -166,7 +152,6 @@ const activateAccount = async (req, res) => {
     return res.status(400).send("Invalid or expired activation link.");
   }
 };
-
 
 
 const register = async (req, res) => {
