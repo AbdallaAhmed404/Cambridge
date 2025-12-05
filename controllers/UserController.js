@@ -157,13 +157,11 @@ const activateAccount = async (req, res) => {
     user.activationExpires = undefined;
     await user.save();
 
-    res.status(200).json({ success: true, message: "Account activated successfully." });
-
+    res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
 
   } catch (error) {
     console.error('Activation error:', error);
-    return res.status(400).json({ success: false, message: "The activation link is invalid or has expired. Please request a resend." });
-
+    return res.status(400).send("The activation link is invalid or has expired. Please request a resend.");
   }
 };
 
