@@ -8,7 +8,26 @@ const AdminRouter = require('./routes/AdminRouts')
 const errorHandler = require('./middlewares/errorhandler');
 const path = require('path');
 
-app.use(cors());
+const allowedOrigins = [
+  'https://cambridgeksa.org', 
+  'http://localhost:3000' // للسماح أيضًا بالاختبار المحلي
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // السماح إذا كان الأصل في القائمة المسموح بها، أو إذا لم يكن هناك أصل (كما هو الحال في Postman)
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      // يمكنك تعديل رسالة الخطأ لتكون أكثر تفصيلاً
+      callback(new Error('Not allowed by CORS')); 
+    }
+  },
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  credentials: true, // مهم إذا كنت تستخدم ملفات تعريف الارتباط (Cookies)
+};
+
+app.use(cors(corsOptions));
 app.use(express.json())
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
