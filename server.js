@@ -11,7 +11,7 @@ const path = require('path');
 const allowedOrigins = [
   'https://cambridgeksa.org', 
   'http://localhost:3000',
-  'https://cambridge-dashboard-66oh1nf43-abdallas-projects-5164a1a1.vercel.app'
+  'https://https://cambridge-dashboard-blue.vercel.app'
 ];
 
 const corsOptions = {
