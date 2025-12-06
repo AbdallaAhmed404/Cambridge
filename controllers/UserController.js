@@ -157,7 +157,7 @@ const activateAccount = async (req, res) => {
     user.activationExpires = undefined;
     await user.save();
 
-    res.redirect('https://cambridgeksa.org/accounts/login/?activated=true');
+    return res.status(200).send("Account Activated Successfully");
 
   } catch (error) {
     console.error('Activation error:', error);
