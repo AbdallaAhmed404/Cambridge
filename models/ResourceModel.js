@@ -1,14 +1,25 @@
 // models/ResourceModel.js
 const mongoose = require('mongoose');
 
-// تعريف هيكل البيانات لوسائط الصفحة الواحدة (للسهولة يمكن دمج الصوت والفيديو في هيكل واحد)
-// سنقوم بإنشاء هيكل بسيط لتخزين رقم الصفحة والمسار
+const TeacherResource = new mongoose.Schema({
+    title: { 
+        type: String, 
+        required: true,
+        trim: true,
+    },
+    path: { // مسار الملف (سواء كان صوت، فيديو، ملف إجابات، أو مورد قابل للتحميل)
+        type: [String], 
+        default: [],
+    },
+});
+
+// تعريف هيكل البيانات لوسائط الصفحة الواحدة (للفصل الرقمي، الصوتيات، والفيديوهات)
 const PageMediaItemSchema = new mongoose.Schema({
     pageNumber: { // رقم الصفحة المرتبط بالملف
         type: Number,
         required: true,
     },
-    path: { // مسار الملف (سواء كان صوت أو فيديو)
+    path: { // مسار الملف (صوت، فيديو، أو أي ملف ميديا للفصل الرقمي)
         type: String,
         required: true,
     },
@@ -22,32 +33,57 @@ const resourceSchema = new mongoose.Schema({
     },
     targetRole: {
         type: String,
-        required: true, // جعله مطلوبًا
-        enum: ['Student', 'Teacher'], // تحديد القيم الممكنة (طالب أو معلم بالإنجليزية
+        required: true, 
+        enum: ['Student', 'Teacher'],
     },
-    // مسار صورة الغلاف المحفوظة على الخادم (ملف واحد)
     photo: { 
         type: String, 
         required: true,
     },
-    // مسار ملف الكتاب/PDF المحفوظ على الخادم (ملف واحد)
     bookPath: {
         type: String, 
         required: true,
     },
     
-    // 🆕 حقل جديد لملفات الصوت المرتبطة بالصفحات
     pageAudios: {
         type: [PageMediaItemSchema],
         default: [],
     },
     
-    // 🆕 حقل جديد لملفات الفيديو المرتبطة بالصفحات
     pageVideos: {
         type: [PageMediaItemSchema],
         default: [],
     },
     
+    answers: {
+        type: [TeacherResource],
+        default: [],
+    },
+    
+    downloadableResources: {
+        type: [TeacherResource],
+        default: [],
+    },
+
+    // 🆕 حقل جديد للفصل الرقمي (Digital Classroom)
+    digitalClassroom: {
+        type: {
+            pdfPath: { // مسار ملف الـ PDF الأساسي للفصل الرقمي
+                type: String,
+                default: null,
+            },
+            mediaFiles: { // مصفوفة لملفات الميديا المرتبطة بالصفحات
+                type: [PageMediaItemSchema], 
+                default: [],
+            },
+        },
+        default: { 
+            pdfPath: null,
+            mediaFiles: [],
+        },
+        required: false,
+    },
+
     createdAt: {
         type: Date,
         default: Date.now,

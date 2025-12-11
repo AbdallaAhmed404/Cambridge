@@ -22,6 +22,7 @@ UserRouter.post('/resend-activation-email', resendActivation);
 UserRouter.post('/check-code', checkActivationCode);
 UserRouter.get("/download/:type/:resourceId", downloadResourceFile);
 UserRouter.get("/download/:type/:resourceId/:audioId", downloadResourceFile);
+UserRouter.get("/download/extra/:resourceId", downloadResourceFile);
 
 module.exports = UserRouter;
 

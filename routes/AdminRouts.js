@@ -7,9 +7,10 @@ const { resourceUpload } = require('../middlewares/upload'); // يفترض وج�
 
 // جلب دوال الـ Controller
 const { 
-    updateAdminPassword, AllUsers, DelUser, adminLogin, 
-    addResource, getAllResources, getResourceById, deleteResource, 
-    updateResource, createNewCode, getAllCodes, deleteCode ,getAllActivations,deleteActivation
+    updateAdminPassword, AllUsers, DelUser, adminLogin,addTeacherResources,
+    addResource, getAllResources, getResourceById, deleteResource,getUploadUrl,
+    updateResource, createNewCode, getAllCodes, deleteCode ,getAllActivations,deleteActivation,
+    deleteTeacherResourceSpecifics
 } = require('../controllers/AdminController')
 
 
@@ -30,6 +31,9 @@ AdminRouter.patch('/updateresource', resourceEditUpload, updateResource);
 AdminRouter.delete('/delresource', deleteResource); // يفضل استخدام ID في المسار /delresource/:id
 AdminRouter.get('/allresources',isAdmin, getAllResources); // لا تحتاج isAdmin لجلب المنتجات في بعض الحالات
 AdminRouter.get('/resource/:id', getResourceById); // لا تحتاج isAdmin
+AdminRouter.post('/get-upload-url', isAdmin, getUploadUrl);
+AdminRouter.post('/addteacherresources', addTeacherResources);
+AdminRouter.delete('/delteacherespecs', deleteTeacherResourceSpecifics);
 
 // ******* Activation Codes Management *******
 AdminRouter.get('/activation-codes',isAdmin, getAllCodes); // 🔑 تحتاج isAdmin

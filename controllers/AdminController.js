@@ -10,6 +10,48 @@ const path = require('path');
 const ActivationCode = require('../models/ActivationCode.js');
 const UserActivation = require('../models/UserActivation.js');
 const { uploadFileToR2,deleteFileFromR2 } = require('../middlewares/r2Upload.js');
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+require('dotenv').config();
+
+
+
+const R2 = new S3Client({
+    region: "auto",
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
+
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN;
+
+const getUploadUrl = async (req, res) => {
+    try {
+        const { folder, filename, contentType } = req.body;
+        if (!folder || !filename || !contentType) {
+            return res.status(400).json({ message: "folder, filename and contentType are required." });
+        }
+
+        const fileKey = `${folder}${filename}`;
+        const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+        const command = new PutObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: fileKey,
+            ContentType: contentType,
+            ACL: 'public-read'
+        });
+
+        const signedUrl = await getSignedUrl(R2, command, { expiresIn: 3600 });
+        const publicUrl = `${R2_PUBLIC_DOMAIN}/${fileKey}`;
+
+        return res.status(200).json({ signedUrl, publicUrl });
+    } catch (error) {
+        console.error("Error generating signed URL:", error);
+        return res.status(500).json({ message: "Failed to generate signed URL." });
+    }
+};
 
 
 
@@ -118,79 +160,128 @@ const DelUser = async (req, res, next) => {
 
 const addResource = async (req, res) => {
     try {
-        const { title, targetRole, audioPageNumbers = [], videoPageNumbers = [] } = req.body;
-        const files = req.files;
+        const { title, targetRole, photo, bookPath, pageAudios = [], pageVideos = [] } = req.body;
 
-        if (!title || !targetRole || !files || !files.coverPhoto || !files.bookFile) {
-            // ... (باقي التحقق من البيانات الأساسية كما هو)
+        if (!title || !targetRole || !photo || !bookPath) {
+            return res.status(400).json({ message: "Missing required fields" });
         }
 
-        const audioFiles = files.pageAudioFiles || [];
-        const videoFiles = files.pageVideoFiles || [];
-
-        // 2 & 3. التحقق من تطابق الأعداد كما هو...
-
-        // 🚨 التغيير الكبير: الرفع إلى R2 والحصول على الـ URL بدلاً من الـ Path
-        
-        // 1. رفع صورة الغلاف
-        const coverPhotoFile = files.coverPhoto[0];
-        const coverPhotoURL = await uploadFileToR2(coverPhotoFile, 'covers/');
-
-        // 2. رفع ملف الكتاب (PDF)
-        const bookFile = files.bookFile[0];
-        const bookURL = await uploadFileToR2(bookFile, 'books/');
-        
-        // 3. رفع ملفات الصوت
-        const pageAudiosArray = await Promise.all(
-            audioFiles.map(async (file, index) => {
-                const audioURL = await uploadFileToR2(file, 'audio/');
-                return {
-                    pageNumber: parseInt(audioPageNumbers[index]),
-                    path: audioURL, // 🚨 حفظ الـ URL في الداتابيز
-                };
-            })
-        );
-        
-        // 4. رفع ملفات الفيديو
-        const pageVideosArray = await Promise.all(
-            videoFiles.map(async (file, index) => {
-                const videoURL = await uploadFileToR2(file, 'video/');
-                return {
-                    pageNumber: parseInt(videoPageNumbers[index]),
-                    path: videoURL, // 🚨 حفظ الـ URL في الداتابيز
-                };
-            })
-        );
-
-        // 5. إنشاء المورد وحفظه (باستخدام الـ URLs الجديدة)
         const newResource = new Resource({
             title,
             targetRole,
-            photo: coverPhotoURL, // 🚨 تم تغيير المسار إلى URL
-            bookPath: bookURL,   // 🚨 تم تغيير المسار إلى URL
-            pageAudios: pageAudiosArray,
-            pageVideos: pageVideosArray,
+            photo,   // URL من الفرونت
+            bookPath,// URL من الفرونت
+            pageAudios,
+            pageVideos,
         });
 
         await newResource.save();
-        
-        return res.status(201).json({ 
-            message: "Resource added successfully and files uploaded to R2.", 
-            resource: newResource 
-        });
+        return res.status(201).json({ message: "Resource added successfully", resource: newResource });
 
     } catch (error) {
-        console.error("❌ Add Resource Error during R2 upload:", error);
-        return res.status(500).json({ message: "Server error during resource addition. Could not upload files." });
+        console.error("AddResource Error:", error);
+        return res.status(500).json({ message: "Server error" });
     }
 };
+
+const addTeacherResources = async (req, res) => {
+    try {
+        // 🆕 استلام حقل digitalClassroom
+        const { resourceId, answers = [], downloadableResources = [], digitalClassroom } = req.body;
+
+        if (!resourceId) {
+            return res.status(400).json({ message: "Resource ID is required for updating teacher resources." });
+        }
+
+        const resource = await Resource.findById(resourceId);
+        if (!resource) {
+            return res.status(404).json({ message: "Resource not found." });
+        }
+        
+        // ------------------------------------------------------------------
+        // منطق تحديث/إضافة الإجابات (Answers)
+        // ------------------------------------------------------------------
+        answers.forEach(newAnswer => {
+            const existingAnswer = resource.answers.find(ans => ans.title === newAnswer.title);
+            if (existingAnswer) {
+                if (!existingAnswer.path.includes(newAnswer.path)) {
+                    existingAnswer.path.push(newAnswer.path);
+                }
+            } else {
+                resource.answers.push({
+                    title: newAnswer.title,
+                    path: [newAnswer.path]
+                });
+            }
+        });
+
+        // ------------------------------------------------------------------
+        // منطق تحديث/إضافة الموارد القابلة للتحميل (Downloadable Resources)
+        // ------------------------------------------------------------------
+        downloadableResources.forEach(newResource => {
+            const existingResource = resource.downloadableResources.find(res => res.title === newResource.title);
+
+            if (existingResource) {
+                if (!existingResource.path.includes(newResource.path)) {
+                    existingResource.path.push(newResource.path);
+                }
+            } else {
+                resource.downloadableResources.push({
+                    title: newResource.title,
+                    path: [newResource.path]
+                });
+            }
+        });
+
+        // ------------------------------------------------------------------
+        // 🆕 منطق تحديث/إضافة الفصل الرقمي (Digital Classroom)
+        // ------------------------------------------------------------------
+        if (digitalClassroom) {
+            // تحديث مسار PDF إذا تم إرساله
+            if (digitalClassroom.pdfPath) {
+                resource.digitalClassroom.pdfPath = digitalClassroom.pdfPath;
+            }
+            
+            // إضافة ملفات الميديا الجديدة
+            if (digitalClassroom.mediaFiles && Array.isArray(digitalClassroom.mediaFiles)) {
+                digitalClassroom.mediaFiles.forEach(newMedia => {
+                    // PageMediaItemSchema يحتوي على pageNumber و path
+                    // نتحقق من عدم وجود ملف ميديا بنفس المسار ورقم الصفحة
+                    const existingMedia = resource.digitalClassroom.mediaFiles.find(
+                        media => media.pageNumber === newMedia.pageNumber && media.path === newMedia.path
+                    );
+                    
+                    if (!existingMedia) {
+                        resource.digitalClassroom.mediaFiles.push(newMedia);
+                    }
+                });
+            }
+        }
+
+        resource.markModified('answers');
+        resource.markModified('downloadableResources');
+        // 🆕 وضع علامة التعديل على حقول الفصل الرقمي
+        resource.markModified('digitalClassroom');
+        resource.markModified('digitalClassroom.pdfPath'); 
+        resource.markModified('digitalClassroom.mediaFiles'); 
+        
+        await resource.save();
+
+        return res.status(200).json({ message: "Teacher resources and Digital Classroom updated successfully", resource });
+
+    } catch (error) {
+        console.error("AddTeacherResources Error:", error);
+        return res.status(500).json({ message: "Server error" });
+    }
+};
+
 
 const getAllResources = async (req, res) => {
     try {
         // البحث عن جميع الموارد
         const resources = await Resource.find({})
             // تحديد الحقول المراد إظهارها في القائمة الرئيسية
-            .select('title targetRole photo pageAudios pageVideos createdAt');
+            .select('_هي title targetRole photo pageAudios pageVideos answers downloadableResources digitalClassroom createdAt');
 
         return res.status(200).json({
             message: "Resources retrieved successfully.",
@@ -230,7 +321,7 @@ const deleteResource = async (req, res) => {
     try {
         const resourceId = req.body.id;
 
-        // 1. استرجاع بيانات المورد (كما هو)
+        // 1. استرجاع بيانات المورد
         const resource = await Resource.findById(resourceId);
         const activationid = await ActivationCode.find({ product_id: resourceId });
 
@@ -238,31 +329,47 @@ const deleteResource = async (req, res) => {
             return res.status(404).json({ message: "Resource not found." });
         }
 
-        // 2. تجميع جميع الـ URLs للحذف
+        // 2. تجميع جميع الـ URLs للحذف (بما في ذلك الحقول الجديدة)
         const filesToDelete = [
             resource.photo,
             resource.bookPath,
+            
+            // 🛑 الحقول القديمة
             ...resource.pageAudios.map(a => a.path),
-            ...resource.pageVideos.map(v => v.path)
-        ];
+            ...resource.pageVideos.map(v => v.path),
+            
+            // 🛑 الحقول الجديدة: Answers
+            ...resource.answers.flatMap(ans => ans.path),
+            
+            // 🛑 الحقول الجديدة: Downloadable Resources
+            ...resource.downloadableResources.flatMap(d => d.path),
+            
+            // 🛑 الحقول الجديدة: Digital Classroom (PDF + Media Files)
+            resource.digitalClassroom.pdfPath,
+            ...resource.digitalClassroom.mediaFiles.map(m => m.path)
 
-        // 🚨 التغيير الرئيسي: استخدام Promise.all لحذف الملفات من R2 
+        ].filter(url => url); // تصفية لضمان عدم إرسال قيم null/undefined
+
+        // 3. حذف الملفات من R2 Cloud
         await Promise.all(
-            filesToDelete.filter(url => url).map(url => deleteFileFromR2(url))
+            filesToDelete.map(url => deleteFileFromR2(url))
         );
         
-        // 3. حذف الـ Activation Code
-        // بما أنك تستخدم find و findOneAndDelete، تأكد من حلقة على الـ activationid
-        if (activationid && activationid.length > 0) {
-            // حذف كل كود تنشيط مرتبط
-            await Promise.all(
-                activationid.map(code => ActivationCode.findByIdAndDelete(code._id))
-            );
-            // حذف جميع سجلات تفعيل المستخدم المرتبطة بالمنتج (قد تحتاج لتعديل UserActivation)
-            await UserActivation.deleteMany({ activationCode: { $in: activationid.map(a => a._id) } });
-        }
+        // 4. حذف الـ Activation Code وسجلات تفعيل المستخدم
+       if (activationid && activationid.length > 0) {
+            
+            // قائمة بـ _id لجميع أكواد التفعيل المرتبطة بهذا المورد
+            const activationCodeIds = activationid.map(a => a._id);
 
-        // 4. حذف المورد من الداتابيز
+            // 🛑 التصحيح هنا: استخدام 'code_id' بدلاً من 'activationCode'
+            await UserActivation.deleteMany({ code_id: { $in: activationCodeIds } });
+
+            // ثم حذف أكواد التفعيل نفسها
+            await Promise.all(
+                activationCodeIds.map(codeId => ActivationCode.findByIdAndDelete(codeId))
+            );
+        }
+        // 5. حذف المورد من الداتابيز
         await Resource.findByIdAndDelete(resourceId);
 
         res.status(200).json({ message: "Resource and associated files deleted successfully from R2 and MongoDB." });
@@ -272,6 +379,63 @@ const deleteResource = async (req, res) => {
         return res.status(500).json({ message: "Failed to delete resource and its files." });
     }
 };
+
+const deleteTeacherResourceSpecifics = async (req, res) => {
+    try {
+        const resourceId = req.body.id;
+
+        const resource = await Resource.findById(resourceId);
+
+        if (!resource) {
+            return res.status(404).json({ message: "Resource not found." });
+        }
+
+        // 1. تجميع جميع الـ URLs الخاصة بموارد المُعلم فقط للحذف من R2
+        const teacherFilesToDelete = [
+            // Answers
+            ...resource.answers.flatMap(ans => ans.path),
+            
+            // Downloadable Resources
+            ...resource.downloadableResources.flatMap(d => d.path),
+            
+            // Digital Classroom (PDF + Media Files)
+            resource.digitalClassroom.pdfPath,
+            ...resource.digitalClassroom.mediaFiles.map(m => m.path)
+
+        ].filter(url => url); // تصفية لضمان عدم إرسال قيم null/undefined
+
+        // 2. حذف الملفات من R2 Cloud
+        if (teacherFilesToDelete.length > 0) {
+            console.log(`Deleting ${teacherFilesToDelete.length} teacher-specific files from R2.`);
+            await Promise.all(
+                teacherFilesToDelete.map(url => deleteFileFromR2(url))
+            );
+        }
+
+        // 3. تحديث المورد في الداتابيز: تصفير حقول المعلم
+        await Resource.findByIdAndUpdate(resourceId, {
+            $set: {
+                answers: [],
+                downloadableResources: [],
+                digitalClassroom: { 
+                    pdfPath: null,
+                    mediaFiles: [],
+                }
+            }
+        });
+
+        res.status(200).json({ 
+            message: "Teacher-specific resources deleted successfully from R2 and cleared from MongoDB." 
+        });
+
+    } catch (err) {
+        console.error("❌ Error deleting teacher-specific resources:", err);
+        return res.status(500).json({ message: "Failed to delete teacher-specific resources." });
+    }
+};
+
+// يجب إضافة الدالة الجديدة إلى exports في ملف المتحكم
+// module.exports = { deleteResource, deleteTeacherResourceSpecifics, ... };
 
 // =======================================================
 // 3. تعديل مورد (Update Resource)
@@ -661,5 +825,7 @@ module.exports = {
     deleteCode,
     getAllActivations,
     deleteActivation,
-
+    getUploadUrl,
+    addTeacherResources,
+    deleteTeacherResourceSpecifics
 };

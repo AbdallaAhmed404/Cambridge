@@ -123,7 +123,6 @@ const sendActivationEmail = async (user) => {
   // 5. إرسال الإيميل عبر API
   try {
     await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('API email sent successfully using Brevo.');
   } catch (error) {
     // يمكنك وضع معالجة أخطاء أفضل هنا
     console.error('Error sending Brevo API email:', error.response ? error.response.text : error);
@@ -703,64 +702,102 @@ const getActivatedResources = async (req, res) => {
 
 // ... (Imports: path, Resource, etc. assumed)
 downloadResourceFile = async (req, res) => {
-  try {
-    const { type, resourceId, audioId } = req.params;
-    const resource = await Resource.findById(resourceId);
+    try {
+        // استخراج المعاملات من المسار
+        const { type, resourceId, audioId } = req.params;
 
-    if (!resource) {
-      return res.status(404).json({ message: "Resource not found" });
+        // 🆕 الحالة الجديدة: التعامل مع الروابط الإضافية (Answers & Downloadable)
+        if (type === "extra") {
+            const filePathQuery = req.query.path;
+            const suggestedFileNameQuery = req.query.fileName;
+
+            if (!filePathQuery || !suggestedFileNameQuery) {
+                return res.status(400).json({ message: "Missing file path or file name query parameters." });
+            }
+
+            // فك تشفير المسارات والأسماء المرسلة من الـ Frontend
+            const filePath = decodeURIComponent(filePathQuery);
+            const suggestedFileName = decodeURIComponent(suggestedFileNameQuery);
+
+            // جلب بيانات الملف من رابط Cloudflare R2
+            const response = await axios({
+                method: 'get',
+                url: filePath, // رابط Cloudflare R2
+                responseType: 'stream'
+            });
+
+            // تعيين الـ Headers التي تجبر المتصفح على التحميل
+            res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
+            res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
+
+            // توجيه محتوى الملف مباشرة إلى الـ Response
+            response.data.pipe(res);
+            return; // إنهاء الدالة هنا
+        }
+        
+        // ------------------------------------------------------------------
+        // الأكواد القديمة (لـ book, audio, video) تبدأ من هنا
+        // ------------------------------------------------------------------
+        
+        // هذا الجزء يتم تنفيذه فقط إذا كان type = "book", "audio", أو "video"
+        
+        // يجب أن يكون resourceId هو ObjectId صالح الآن
+        const resource = await Resource.findById(resourceId);
+
+        if (!resource) {
+            return res.status(404).json({ message: "Resource not found" });
+        }
+
+        let filePath = null;
+        let suggestedFileName = "resource_file";
+
+        // --- تحديد المسار واسم الملف المقترح للموارد القديمة (book, audio, video) ---
+        if (type === "book") {
+            filePath = resource.bookPath;
+            suggestedFileName = `${resource.title}-Book.pdf`;
+        } else if (type === "audio") {
+            const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
+            if (audioObj) {
+                filePath = audioObj.path;
+                suggestedFileName = `${resource.title}-Page-${audioObj.pageNumber}.mp3`;
+            }
+        } else if (type === "video") {
+            const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
+            if (videoObj) {
+                filePath = videoObj.path;
+                suggestedFileName = `${resource.title}-Page-${videoObj.pageNumber}.mp4`;
+            }
+        }
+
+        if (!filePath) {
+            return res.status(404).json({ message: `File not found for type: ${type}` });
+        }
+
+        // جلب بيانات الملف من رابط Cloudflare R2 (للموارد القديمة)
+        const response = await axios({
+            method: 'get',
+            url: filePath, // رابط Cloudflare R2
+            responseType: 'stream'
+        });
+
+        // تعيين الـ Headers
+        res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
+
+        // توجيه محتوى الملف مباشرة إلى الـ Response
+        response.data.pipe(res);
     }
-
-    let filePath = null;
-    let suggestedFileName = "resource_file"; // اسم افتراضي للملف
-
-    // --- تحديد المسار واسم الملف المقترح ---
-    if (type === "book") {
-      filePath = resource.bookPath;
-      suggestedFileName = `${resource.title}-Book.pdf`;
-    } else if (type === "audio") {
-      const audioObj = resource.pageAudios.find(a => a._id.toString() === audioId);
-      if (audioObj) {
-        filePath = audioObj.path;
-        suggestedFileName = `${resource.title}-Page-${audioObj.pageNumber}.mp3`;
-      }
-    } else if (type === "video") {
-      const videoObj = resource.pageVideos.find(v => v._id.toString() === audioId);
-      if (videoObj) {
-        filePath = videoObj.path;
-        suggestedFileName = `${resource.title}-Page-${videoObj.pageNumber}.mp4`;
-      }
+    catch (err) {
+        console.error("Download error:", err);
+        // التعامل مع خطأ CastError إذا حدث مرة أخرى
+        if (err.kind === 'ObjectId') {
+             return res.status(400).json({ message: `Invalid ID format provided for resource: ${err.value}` });
+        }
+        if (err.response && err.response.status) {
+            return res.status(err.response.status).json({ message: `Error fetching file from Cloud Storage. Status: ${err.response.status}` });
+        }
+        res.status(500).json({ message: "Download error" });
     }
-
-    if (!filePath) {
-      return res.status(404).json({ message: "File not found" });
-    }
-
-    // ⭐ التغيير الرئيسي: استخدام axios لجلب الملف وإرساله
-
-    // 1. جلب بيانات الملف من رابط Cloudflare R2
-    const response = await axios({
-      method: 'get',
-      url: filePath, // رابط Cloudflare R2
-      responseType: 'stream' // لتجنب استهلاك الذاكرة العالية
-    });
-
-    // 2. تعيين الـ Headers التي تجبر المتصفح على التحميل
-    res.setHeader('Content-Type', response.headers['content-type']);
-    res.setHeader('Content-Disposition', `attachment; filename="${suggestedFileName}"`);
-
-    // 3. توجيه محتوى الملف مباشرة إلى الـ Response
-    response.data.pipe(res);
-
-  }
-  catch (err) {
-    console.error("Download error:", err);
-    // في حالة وجود خطأ في جلب الملف من R2 (مثل 404 أو timeout)
-    if (err.response && err.response.status) {
-      return res.status(err.response.status).json({ message: "Error fetching file from Cloud Storage." });
-    }
-    res.status(500).json({ message: "Download error" });
-  }
 };
 // ...
 
