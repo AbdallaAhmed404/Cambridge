@@ -61,13 +61,13 @@ const checkActivationCode = async (req, res) => {
 
     if (remainingActivations <= 0) {
       return res.status(400).json({
-        message: "This access code has reached its maximum number of activations and cannot be used again."
+        message: "This access code has reached its maximum number of activations."
       });
     }
 
     // 6. إرجاع بيانات النجاح
     return res.status(200).json({
-      message: `Access code is valid. ${remainingActivations} activation(s) remaining.`,
+      message: `Access code is valid.`,
     });
 
   } catch (error) {
