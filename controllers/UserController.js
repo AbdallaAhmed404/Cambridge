@@ -261,6 +261,7 @@ const login = async (req, res) => {
       message: "Login successful.",
       token,
       userID: user._id,
+      userRole: user.Role,
     });
 
   } catch (error) {
