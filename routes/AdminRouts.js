@@ -10,7 +10,7 @@ const {
     updateAdminPassword, AllUsers, DelUser, adminLogin,addTeacherResources,
     addResource, getAllResources, getResourceById, deleteResource,getUploadUrl,
     updateResource, createNewCode, getAllCodes, deleteCode ,getAllActivations,deleteActivation,
-    deleteTeacherResourceSpecifics
+    deleteTeacherResourceSpecifics,deleteSpecificResourceItem
 } = require('../controllers/AdminController')
 
 
@@ -34,6 +34,7 @@ AdminRouter.get('/resource/:id', getResourceById); // لا تحتاج isAdmin
 AdminRouter.post('/get-upload-url', isAdmin, getUploadUrl);
 AdminRouter.post('/addteacherresources', addTeacherResources);
 AdminRouter.delete('/delteacherespecs', deleteTeacherResourceSpecifics);
+AdminRouter.post('/resource/delete-item', deleteSpecificResourceItem);
 
 // ******* Activation Codes Management *******
 AdminRouter.get('/activation-codes',isAdmin, getAllCodes); // 🔑 تحتاج isAdmin

@@ -808,6 +808,54 @@ const deleteActivation = async (req, res) => {
     }
 };
 
+const deleteSpecificResourceItem = async (req, res) => {
+    try {
+        const { resourceId, type, title, filePath } = req.body;
+
+        const resource = await Resource.findById(resourceId);
+        if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+        // 1. تحديد نوع الحذف (حذف ملف واحد أم حذف مجموعة بالكامل)
+        if (filePath) {
+            // حذف ملف واحد من R2
+            await deleteFileFromR2(filePath);
+
+            // تحديث الداتا بيز بناءً على النوع
+            if (type === 'answers' || type === 'downloadableResources') {
+                const item = resource[type].find(i => i.title === title);
+                if (item) {
+                    item.path = item.path.filter(p => p !== filePath);
+                    // إذا أصبحت مصفوفة المسارات فارغة، نحذف العنوان بالكامل
+                    if (item.path.length === 0) {
+                        resource[type] = resource[type].filter(i => i.title !== title);
+                    }
+                }
+            } else if (type === 'digitalClassroomMedia') {
+                resource.digitalClassroom.mediaFiles = resource.digitalClassroom.mediaFiles.filter(m => m.path !== filePath);
+            } else if (type === 'digitalClassroomPdf') {
+                resource.digitalClassroom.pdfPath = null;
+            }
+        } else if (title) {
+            // حذف مجموعة ملفات بالكامل (مثلاً كل ملفات "Unit 1")
+            const itemToDelete = resource[type].find(i => i.title === title);
+            if (itemToDelete) {
+                await Promise.all(itemToDelete.path.map(p => deleteFileFromR2(p)));
+                resource[type] = resource[type].filter(i => i.title !== title);
+            }
+        }
+
+        resource.markModified('answers');
+        resource.markModified('downloadableResources');
+        resource.markModified('digitalClassroom');
+        
+        await resource.save();
+        res.status(200).json({ message: "Item deleted successfully", resource });
+    } catch (error) {
+        console.error("Delete Item Error:", error);
+        res.status(500).json({ message: "Server error during deletion" });
+    }
+};
+
 
 module.exports = {
 
@@ -827,5 +875,6 @@ module.exports = {
     deleteActivation,
     getUploadUrl,
     addTeacherResources,
-    deleteTeacherResourceSpecifics
+    deleteTeacherResourceSpecifics,
+    deleteSpecificResourceItem
 };
