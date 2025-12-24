@@ -33,7 +33,7 @@ const GlossaryItemSchema = new mongoose.Schema({
     },
     description: { // الشرح
         type: String,
-        required: true,
+        required: false,
     },
     image: { // صورة المصطلح (اختياري)
         type: String,
