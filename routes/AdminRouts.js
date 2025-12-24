@@ -10,7 +10,8 @@ const {
     updateAdminPassword, AllUsers, DelUser, adminLogin,addTeacherResources,
     addResource, getAllResources, getResourceById, deleteResource,getUploadUrl,
     updateResource, createNewCode, getAllCodes, deleteCode ,getAllActivations,deleteActivation,
-    deleteTeacherResourceSpecifics,deleteSpecificResourceItem,addGlossaryItems,deleteGlossaryItem
+    deleteTeacherResourceSpecifics,deleteSpecificResourceItem,addGlossaryItems,deleteGlossaryItem,
+    addDigitalGlossaryItems,deleteDigitalGlossaryItem
 } = require('../controllers/AdminController')
 
 
@@ -37,6 +38,8 @@ AdminRouter.delete('/delteacherespecs', deleteTeacherResourceSpecifics);
 AdminRouter.post('/resource/delete-item', deleteSpecificResourceItem);
 AdminRouter.post('/add-glossary-items',addGlossaryItems);
 AdminRouter.delete('/delete-glossary-item',deleteGlossaryItem);
+AdminRouter.post('/add-digital-glossary-items', addDigitalGlossaryItems);
+AdminRouter.post('/delete-digital-glossary-item', deleteDigitalGlossaryItem);
 
 // ******* Activation Codes Management *******
 AdminRouter.get('/activation-codes',isAdmin, getAllCodes); // 🔑 تحتاج isAdmin

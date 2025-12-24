@@ -75,6 +75,8 @@ const resourceSchema = new mongoose.Schema({
         type: [GlossaryItemSchema],
         default: [],
     },
+
+    digitalGlossary: { type: [GlossaryItemSchema], default: [] },
     
     answers: {
         type: [TeacherResource],

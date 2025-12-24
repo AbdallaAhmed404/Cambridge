@@ -816,35 +816,53 @@ const deleteSpecificResourceItem = async (req, res) => {
         const resource = await Resource.findById(resourceId);
         if (!resource) return res.status(404).json({ message: "Resource not found" });
 
-        // 1. تحديد نوع الحذف (حذف ملف واحد أم حذف مجموعة بالكامل)
+        // --- الحالة الأولى: حذف ملف واحد محدد (بالتحديد عبر المسار) ---
         if (filePath) {
-            // حذف ملف واحد من R2
             await deleteFileFromR2(filePath);
 
-            // تحديث الداتا بيز بناءً على النوع
             if (type === 'answers' || type === 'downloadableResources') {
                 const item = resource[type].find(i => i.title === title);
                 if (item) {
                     item.path = item.path.filter(p => p !== filePath);
-                    // إذا أصبحت مصفوفة المسارات فارغة، نحذف العنوان بالكامل
                     if (item.path.length === 0) {
                         resource[type] = resource[type].filter(i => i.title !== title);
                     }
                 }
-            } else if (type === 'digitalClassroomMedia') {
-                resource.digitalClassroom.mediaFiles = resource.digitalClassroom.mediaFiles.filter(m => m.path !== filePath);
-            } else if (type === 'digitalClassroomPdf') {
-                resource.digitalClassroom.pdfPath = null;
+            } 
+            else if (type === 'digitalClassroomMedia') {
+                if (resource.digitalClassroom && resource.digitalClassroom.mediaFiles) {
+                    resource.digitalClassroom.mediaFiles = resource.digitalClassroom.mediaFiles.filter(m => m.path !== filePath);
+                }
+            } 
+            else if (type === 'digitalClassroomPdf') {
+                if (resource.digitalClassroom) {
+                    resource.digitalClassroom.pdfPath = null;
+                }
             }
-        } else if (title) {
-            // حذف مجموعة ملفات بالكامل (مثلاً كل ملفات "Unit 1")
-            const itemToDelete = resource[type].find(i => i.title === title);
-            if (itemToDelete) {
-                await Promise.all(itemToDelete.path.map(p => deleteFileFromR2(p)));
-                resource[type] = resource[type].filter(i => i.title !== title);
+        } 
+        // --- الحالة الثانية: حذف مجموعة بالكامل (مثل حذف كل ملفات Page 5 أو Unit 1) ---
+        else if (title) {
+            if (type === 'answers' || type === 'downloadableResources') {
+                const itemToDelete = resource[type].find(i => i.title === title);
+                if (itemToDelete) {
+                    await Promise.all(itemToDelete.path.map(p => deleteFileFromR2(p)));
+                    resource[type] = resource[type].filter(i => i.title !== title);
+                }
+            } 
+            else if (type === 'digitalClassroomMedia') {
+                // هنا نقوم بفلترة الميديا بناءً على رقم الصفحة المستخرج من العنوان (Page 5)
+                const pageNum = parseInt(title.replace('Page ', ''));
+                
+                if (resource.digitalClassroom && resource.digitalClassroom.mediaFiles) {
+                    const filesToDelete = resource.digitalClassroom.mediaFiles.filter(m => m.pageNumber === pageNum);
+                    await Promise.all(filesToDelete.map(f => deleteFileFromR2(f.path)));
+                    
+                    resource.digitalClassroom.mediaFiles = resource.digitalClassroom.mediaFiles.filter(m => m.pageNumber !== pageNum);
+                }
             }
         }
 
+        // إخطار Mongoose بالتغييرات
         resource.markModified('answers');
         resource.markModified('downloadableResources');
         resource.markModified('digitalClassroom');
@@ -902,6 +920,31 @@ const deleteGlossaryItem = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     }
 };
+const addDigitalGlossaryItems = async (req, res) => {
+    try {
+        const { resourceId, glossary = [] } = req.body;
+        const resource = await Resource.findById(resourceId);
+        if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+        resource.digitalGlossary.push(...glossary);
+        await resource.save();
+        res.status(200).json({ message: "Digital glossary updated", resource });
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const deleteDigitalGlossaryItem = async (req, res) => {
+    try {
+        const { resourceId, itemId, imageUrl } = req.body;
+        const resource = await Resource.findById(resourceId);
+        if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+        if (imageUrl) await deleteFileFromR2(imageUrl);
+        resource.digitalGlossary = resource.digitalGlossary.filter(item => item._id.toString() !== itemId);
+        
+        await resource.save();
+        res.status(200).json({ message: "Deleted from digital glossary", resource });
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
 
 module.exports = {
 
@@ -924,5 +967,7 @@ module.exports = {
     deleteTeacherResourceSpecifics,
     deleteSpecificResourceItem,
     addGlossaryItems,
-    deleteGlossaryItem
+    deleteGlossaryItem,
+    addDigitalGlossaryItems,
+    deleteDigitalGlossaryItem
 };
