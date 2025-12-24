@@ -160,7 +160,7 @@ const DelUser = async (req, res, next) => {
 
 const addResource = async (req, res) => {
     try {
-        const { title, targetRole, photo, bookPath, pageAudios = [], pageVideos = [] } = req.body;
+        const { title, targetRole, photo, bookPath, pageAudios = [], pageVideos = [] , glossary = [] } = req.body;
 
         if (!title || !targetRole || !photo || !bookPath) {
             return res.status(400).json({ message: "Missing required fields" });
@@ -173,6 +173,7 @@ const addResource = async (req, res) => {
             bookPath,// URL من الفرونت
             pageAudios,
             pageVideos,
+            glossary,
         });
 
         await newResource.save();
@@ -856,6 +857,51 @@ const deleteSpecificResourceItem = async (req, res) => {
     }
 };
 
+const addGlossaryItems = async (req, res) => {
+    try {
+        const { resourceId, glossary = [] } = req.body;
+
+        if (!resourceId || glossary.length === 0) {
+            return res.status(400).json({ message: "Resource ID and glossary items are required." });
+        }
+
+        const resource = await Resource.findById(resourceId);
+        if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+        // إضافة العناصر الجديدة للمصفوفة الحالية
+        resource.glossary.push(...glossary);
+        
+        await resource.save();
+        res.status(200).json({ message: "Glossary items added successfully", resource });
+    } catch (error) {
+        console.error("Add Glossary Items Error:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// 2. حذف عنصر واحد محدد من القاموس
+const deleteGlossaryItem = async (req, res) => {
+    try {
+        const { resourceId, itemId, imageUrl } = req.body;
+
+        const resource = await Resource.findById(resourceId);
+        if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+        // 1. حذف الصورة من R2 إذا وجدت
+        if (imageUrl) {
+            await deleteFileFromR2(imageUrl);
+        }
+
+        // 2. حذف العنصر من المصفوفة في قاعدة البيانات
+        resource.glossary = resource.glossary.filter(item => item._id.toString() !== itemId);
+        
+        await resource.save();
+        res.status(200).json({ message: "Glossary item deleted successfully", resource });
+    } catch (error) {
+        console.error("Delete Glossary Item Error:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
 
 module.exports = {
 
@@ -876,5 +922,7 @@ module.exports = {
     getUploadUrl,
     addTeacherResources,
     deleteTeacherResourceSpecifics,
-    deleteSpecificResourceItem
+    deleteSpecificResourceItem,
+    addGlossaryItems,
+    deleteGlossaryItem
 };

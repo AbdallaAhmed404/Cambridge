@@ -25,6 +25,22 @@ const PageMediaItemSchema = new mongoose.Schema({
     },
 });
 
+
+const GlossaryItemSchema = new mongoose.Schema({
+    term: { // الكلمة أو المصطلح
+        type: String,
+        required: true,
+    },
+    description: { // الشرح
+        type: String,
+        required: true,
+    },
+    image: { // صورة المصطلح (اختياري)
+        type: String,
+        default: null,
+    },
+});
+
 const resourceSchema = new mongoose.Schema({
     title: {
         type: String,
@@ -52,6 +68,11 @@ const resourceSchema = new mongoose.Schema({
     
     pageVideos: {
         type: [PageMediaItemSchema],
+        default: [],
+    },
+
+    glossary: {
+        type: [GlossaryItemSchema],
         default: [],
     },
     
