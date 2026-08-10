@@ -1029,5 +1029,5 @@ module.exports = {
     addDigitalGlossaryItems,
     deleteDigitalGlossaryItem,
     ToggleUserActive,
-    renewUserActivation,
+    renewUserActivation
 };
