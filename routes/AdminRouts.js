@@ -11,7 +11,7 @@ const {
     addResource, getAllResources, getResourceById, deleteResource,getUploadUrl,
     updateResource, createNewCode, getAllCodes, deleteCode ,getAllActivations,deleteActivation,
     deleteTeacherResourceSpecifics,deleteSpecificResourceItem,addGlossaryItems,deleteGlossaryItem,
-    addDigitalGlossaryItems,deleteDigitalGlossaryItem
+    addDigitalGlossaryItems,deleteDigitalGlossaryItem,ToggleUserActive,renewUserActivation
 } = require('../controllers/AdminController')
 
 
@@ -25,6 +25,7 @@ AdminRouter.post('/login', adminLogin);
 AdminRouter.put('/updatepassword',  updateAdminPassword); 
 AdminRouter.get('/users',isAdmin, AllUsers); 
 AdminRouter.delete('/users/:id',  DelUser);
+AdminRouter.patch('/activateusers/:id', isAdmin, ToggleUserActive);
 
 // ******* Resources Management *******
 AdminRouter.post('/addresource',isAdmin, resourceUpload, addResource);
@@ -47,6 +48,7 @@ AdminRouter.post('/activation-codes',isAdmin,createNewCode); // 🔑 تحتاج 
 AdminRouter.delete('/activation-codes/:codeId',  deleteCode); // 🔑 تحتاج isAdmin
 AdminRouter.get('/user-activations', isAdmin,getAllActivations);
 AdminRouter.delete('/user-activations/:activationId', deleteActivation);
+AdminRouter.put('/user-activations/renew/:id', isAdmin, renewUserActivation);
 
 
 module.exports = AdminRouter

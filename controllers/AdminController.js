@@ -946,6 +946,64 @@ const deleteDigitalGlossaryItem = async (req, res) => {
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
 
+const ToggleUserActive = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        // البحث عن المستخدم وتحديث حالة isActive إلى true (أو عكسها حسب رغبتك، هنا هنخليها تفعيل مباشر)
+        const user = await UserModel.findByIdAndUpdate(
+            id,
+            { isActive: true },
+            { new: true, runValidators: true }
+        );
+
+        if (!user) {
+            return next(customError({
+                statusCode: 404,
+                message: "User not found"
+            }));
+        }
+
+        res.status(200).json({
+            status: "success",
+            message: "User activated successfully",
+            data: user
+        });
+    } catch (err) {
+        console.error("Error activating user:", err);
+        return next(customError({
+            statusCode: 500,
+            message: "Failed to update user status"
+        }));
+    }
+}
+
+const renewUserActivation = async (req, res) => {
+  try {
+    const activationId = req.params.id;
+
+    // تحديث تاريخ التفعيل ليصبح وقت الضغط (الآن)
+    const updatedActivation = await UserActivation.findByIdAndUpdate(
+      activationId,
+      { activation_date: Date.now() },
+      { new: true } // بيخلي Mongoose يرجع السجل بعد ما اتحدث
+    );
+
+    if (!updatedActivation) {
+      return res.status(404).json({ message: "Activation record not found." });
+    }
+
+    return res.status(200).json({
+      message: "Activation renewed successfully",
+      activation_date: updatedActivation.activation_date
+    });
+
+  } catch (error) {
+    console.error("Renew Activation Error:", error);
+    return res.status(500).json({ message: "Server error during activation renewal." });
+  }
+};
+
 module.exports = {
 
     adminLogin,
@@ -969,5 +1027,7 @@ module.exports = {
     addGlossaryItems,
     deleteGlossaryItem,
     addDigitalGlossaryItems,
-    deleteDigitalGlossaryItem
+    deleteDigitalGlossaryItem,
+    ToggleUserActive,
+    renewUserActivation,
 };
